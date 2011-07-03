@@ -1,0 +1,8 @@
+This directory contains the code necessary to build the Linux starter
+for the JS PC emulator.
+
+config_linux-2.6.20 contains the Linux kernel configuration
+patch_linux-2.6.20 contains the Linux kernel patch
+
+The 'kernel' target of the Makefile shows how to build the
+vmlinux26.bin uncompressed kernel image.

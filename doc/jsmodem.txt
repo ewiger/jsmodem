@@ -1,0 +1,42 @@
+sudo socat -d -d PTY,link=/dev/vppp,raw,echo=0 TCP-LISTEN:2001
+sudo pppd /dev/vppp debug nodetach noauth passive 10.0.5.1:10.0.5.2
+
+pppd /dev/ttyS1 noauth defaultroute usepeerdns
+
+>> port read  LSR: 96   -> 1100000 (THR is empty, and line is idle)
+>> port read  RBR: 0    -> no more bytes are present.
+>> port read  IIR: 1    -> 1 (No interrupt pending)
+>> port read  MSR: 0    -> reset LSB
+>> port read  LSR: 96   -> 1100000 (THR is empty, and line is idle)
+>> port read  IIR: 1    -> 1 (No interrupt pending)
+>> port write LCR: 3    -> 11 (Data word length 1 1 8 bits)
+>> port write MCR: 8    -> 1000 (Auxiliary output 2)
+>> port write IER: 2    -> 10 (Transmitter holding register empty)
+>> port read  LSR: 96   -> 1100000 (THR is empty, and line is idle)
+>> port read  IIR: 2    -> 10 (Transmitter holding register empty)
+>> port write IER: 0    -> disable interrupts
+>> port read  IIR: 1    -> 1 (No interrupt pending)
+>> port write IER: 5    -> enable interrupts (Received data available, Receiver line status register change)
+>> port read  LSR: 96   -> 1100000 (THR is empty, and line is idle)
+>> port read  RBR: 0    -> no more bytes are present.
+>> port read  IIR: 1    -> 1 (No interrupt pending)
+>> port read  MSR: 0    -> reset LSB
+>> port write IER: 5    -> enable interrupts (Received data available, Receiver line status register change) 
+>> port write LCR: 147  -> 10010011 (set word length to 8 bits, No parity, Break signal disabled, DLAB : DLL and DLM accessible)
+>> port write THR: 12   -> 00001100 (transmit)
+>> port write IER: 0    -> disable interrupts
+>> port write LCR: 19	-> 00010011 (set word length to 8 bits, No parity, Break signal disabled, DLAB : RBR, THR and IER accessible)
+>> port write FCR: 0    -> 0 (Disable transmit FIFO) 
+>> port write MCR: 8    -> 1000 (Auxiliary output 2)
+>> port write MCR: 11   -> 1011 (Data terminal ready, Request to send, Auxiliary output 2)
+>> port read  LSR: 96   -> 1100000 (THR is empty, and line is idle)
+>> port write IER: 13   -> 1101 enable interrupts (Received data available, Receiver line status register change, Modem status register change)
+>> port write LCR: 147  -> 10010011 (set word length to 8 bits, No parity, Break signal disabled, DLAB : DLL and DLM accessible)
+>> port write THR: 12   -> 00001100 (transmit)
+>> port write IER: 0    -> disable interrupts
+>> port write LCR: 19	-> 00010011 (set word length to 8 bits, No parity, Break signal disabled, DLAB : RBR, THR and IER accessible)
+>> port write FCR: 0    -> 0 (Disable transmit FIFO) 
+>> port write MCR: 11   -> 1011 (Data terminal ready, Request to send, Auxiliary output 2)
+>> port write IER: 13   -> 1101 enable interrupts (Received data available, Receiver line status register change, Modem status register change)
+>> port write MSR: 0    -> is RO ?
+
