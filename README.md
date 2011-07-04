@@ -1,8 +1,9 @@
 ## JSModem
 
-Provides a virtual modem device for JSLinux platform. It is a result of studying
-project conducted on PC emulator that was implemented in JS by Fabrice Bellard 
-(see http://bellard.org/jslinux). 
+Provides a virtual modem device for JSLinux platform. It is a result of
+studying project conducted on PC emulator that was implemented in JS by Fabrice
+Bellard (see http://bellard.org/jslinux). There is a screencast discussing this
+project http://www.youtube.com/watch?v=MEsmgHrKQYM.
 
 ### Installation
 
@@ -18,3 +19,42 @@ project conducted on PC emulator that was implemented in JS by Fabrice Bellard
 * Login as root and run ./ppp_up to bring up the ppp interface. Check it with
   ifconfig and ping.
 
+### Requirements
+
+JSModem script is heavily based on JSLinux project, hence browser must be 
+modern enough to support it. Another project *websockify* provides websockets 
+abstraction with fallback to flash.
+
+To serve on host system one will need
+
+* python 2.6
+
+* bash
+
+* sed
+
+* gawk
+
+* grep
+
+* pppd
+
+* socat
+
+* iptables
+
+### Tested
+
+Internet connection was tested on 
+
+* *server*: linux 2.6.35 - ubuntu 10.10 Maverick, 
+  *client:* Chrome 12.0.742.112 (linux), FF 3.6.8 (linux).
+
+
+### Feedback
+
+For now, best way to give some feedback is to email eugeny at yakimovitch dot
+gmail dot com with subject jsmodem.  Test reports are greatly appreciated.
+
+wbr,
+yy

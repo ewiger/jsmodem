@@ -35,9 +35,9 @@ var include = function (filename) {
     document.write('<script type="text/javascript" src="' + filename + 
         '"><' + '/script>');
 }
-include('include/websock.js');
 include('include/util.js');
 include('include/base64.js');
+include('include/websock.js');
 
 
 function Uart(pc, port, set_irq_func, write_func) {
