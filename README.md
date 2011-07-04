@@ -53,7 +53,7 @@ Internet connection was tested on
 
 ### Feedback
 
-For now, best way to give some feedback is to email eugeny at yakimovitch dot
+For now, best way to give some feedback is to email eugeny dot yakimovitch at
 gmail dot com with subject jsmodem.  Test reports are greatly appreciated.
 
 wbr,
