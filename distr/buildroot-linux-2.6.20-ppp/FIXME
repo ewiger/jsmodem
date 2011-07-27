@@ -1,0 +1,4 @@
+mkdir -p output/build/linux-2.6.20/arch/x86/configs
+mkdir -p output/build/linux-2.6.20/arch/i386/configs
+ln -s ~/dev/c/buildroot-2011.05/output/build/linux-2.6.20/arch/x86/configs/buildroot_defconfig output/build/linux-2.6.20/arch/i386/configs/
+ln -s /home/yy/dev/c/buildroot-2011.05/output/build/linux-2.6.20/arch/i386/boot /home/yy/dev/c/buildroot-2011.05/output/build/linux-2.6.20/arch/x86/
