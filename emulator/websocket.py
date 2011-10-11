@@ -8,7 +8,7 @@ Licensed under LGPL version 3 (see docs/LICENSE.LGPL-3)
 Supports following protocol versions:
     - http://tools.ietf.org/html/draft-hixie-thewebsocketprotocol-75
     - http://tools.ietf.org/html/draft-hixie-thewebsocketprotocol-76
-    - http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-07
+    - http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-10
 
 You can make a cert/key with openssl using:
 openssl req -new -x509 -days 365 -nodes -out self.pem -keyout self.pem
@@ -16,47 +16,55 @@ as taken from http://docs.python.org/dev/library/ssl.html#certificates
 
 '''
 
-import os, sys, errno, signal, socket, struct, traceback, select
+import os, sys, time, errno, signal, socket, traceback, select
+import array, struct
 from cgi import parse_qsl
 from base64 import b64encode, b64decode
 
 # Imports that vary by python version
+
+# python 3.0 differences
 if sys.hexversion > 0x3000000:
-    # python >= 3.0
-    from io import StringIO
-    from http.server import SimpleHTTPRequestHandler
-    from urllib.parse import urlsplit
     b2s = lambda buf: buf.decode('latin_1')
     s2b = lambda s: s.encode('latin_1')
+    s2a = lambda s: s
 else:
-    # python 2.X
-    from cStringIO import StringIO
-    from SimpleHTTPServer import SimpleHTTPRequestHandler
-    from urlparse import urlsplit
-    # No-ops
-    b2s = lambda buf: buf
-    s2b = lambda s: s
+    b2s = lambda buf: buf  # No-op
+    s2b = lambda s: s      # No-op
+    s2a = lambda s: [ord(c) for c in s]
+try:    from io import StringIO
+except: from cStringIO import StringIO
+try:    from http.server import SimpleHTTPRequestHandler
+except: from SimpleHTTPServer import SimpleHTTPRequestHandler
+try:    from urllib.parse import urlsplit
+except: from urlparse import urlsplit
 
-if sys.hexversion >= 0x2060000:
-    # python >= 2.6
-    from multiprocessing import Process
-    from hashlib import md5, sha1
-else:
-    # python < 2.6
-    Process = None
-    from md5 import md5
-    from sha import sha as sha1
+# python 2.6 differences
+try:    from hashlib import md5, sha1
+except: from md5 import md5; from sha import sha as sha1
+
+# python 2.5 differences
+try:
+    from struct import pack, unpack_from
+except:
+    from struct import pack
+    def unpack_from(fmt, buf, offset=0):
+        slice = buffer(buf, offset, struct.calcsize(fmt))
+        return struct.unpack(fmt, slice)
 
 # Degraded functionality if these imports are missing
-for mod, sup in [('numpy', 'HyBi protocol'),
-        ('ctypes', 'HyBi protocol'), ('ssl', 'TLS/SSL/wss'),
+for mod, sup in [('numpy', 'HyBi protocol'), ('ssl', 'TLS/SSL/wss'),
+        ('multiprocessing', 'Multi-Processing'),
         ('resource', 'daemonizing')]:
     try:
         globals()[mod] = __import__(mod)
     except ImportError:
         globals()[mod] = None
-        print("WARNING: no '%s' module, %s support disabled" % (
+        print("WARNING: no '%s' module, %s is slower or disabled" % (
             mod, sup))
+if multiprocessing and sys.platform == 'win32':
+    # make sockets pickle-able/inheritable
+    import multiprocessing.reduction
 
 
 class WebSocketServer(object):
@@ -87,17 +95,23 @@ Sec-WebSocket-Accept: %s\r
     class EClose(Exception):
         pass
 
-    def __init__(self, listen_host='', listen_port=None,
+    def __init__(self, listen_host='', listen_port=None, source_is_ipv6=False,
             verbose=False, cert='', key='', ssl_only=None,
-            daemon=False, record='', web=''):
+            daemon=False, record='', web='',
+            run_once=False, timeout=0):
 
         # settings
-        self.verbose     = verbose
-        self.listen_host = listen_host
-        self.listen_port = listen_port
-        self.ssl_only    = ssl_only
-        self.daemon      = daemon
-        self.handler_id  = 1
+        self.verbose        = verbose
+        self.listen_host    = listen_host
+        self.listen_port    = listen_port
+        self.ssl_only       = ssl_only
+        self.daemon         = daemon
+        self.run_once       = run_once
+        self.timeout        = timeout
+
+        self.launch_time    = time.time()
+        self.ws_connection  = False
+        self.handler_id     = 1
 
         # Make paths settings absolute
         self.cert = os.path.abspath(cert)
@@ -113,7 +127,7 @@ Sec-WebSocket-Accept: %s\r
             os.chdir(self.web)
 
         # Sanity checks
-        if ssl and self.ssl_only:
+        if not ssl and self.ssl_only:
             raise Exception("No 'ssl' module and SSL-only specified")
         if self.daemon and not resource:
             raise Exception("Module 'resource' required to daemonize")
@@ -124,7 +138,7 @@ Sec-WebSocket-Accept: %s\r
                 self.listen_host, self.listen_port))
         print("  - Flash security policy server")
         if self.web:
-            print("  - Web server")
+            print("  - Web server. Web root: %s" % self.web)
         if ssl:
             if os.path.exists(self.cert):
                 print("  - SSL/TLS support")
@@ -136,10 +150,42 @@ Sec-WebSocket-Accept: %s\r
             print("  - No SSL/TLS support (no 'ssl' module)")
         if self.daemon:
             print("  - Backgrounding (daemon)")
+        if self.record:
+            print("  - Recording to '%s.*'" % self.record)
 
     #
     # WebSocketServer static methods
     #
+
+    @staticmethod
+    def socket(host, port=None, connect=False, prefer_ipv6=False):
+        """ Resolve a host (and optional port) to an IPv4 or IPv6
+        address. Create a socket. Bind to it if listen is set,
+        otherwise connect to it. Return the socket.
+        """
+        flags = 0
+        if host == '':
+            host = None
+        if connect and not port:
+            raise Exception("Connect mode requires a port")
+        if not connect:
+            flags = flags | socket.AI_PASSIVE
+        addrs = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM,
+                socket.IPPROTO_TCP, flags)
+        if not addrs:
+            raise Exception("Could resolve host '%s'" % host)
+        addrs.sort(key=lambda x: x[0])
+        if prefer_ipv6:
+            addrs.reverse()
+        sock = socket.socket(addrs[0][0], addrs[0][1])
+        if connect:
+            sock.connect(addrs[0][4])
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(addrs[0][4])
+            sock.listen(100)
+        return sock
+
     @staticmethod
     def daemonize(keepfd=None, chdir='/'):
         os.umask(0)
@@ -177,6 +223,38 @@ Sec-WebSocket-Accept: %s\r
         os.dup2(os.open(os.devnull, os.O_RDWR), sys.stderr.fileno())
 
     @staticmethod
+    def unmask(buf, f):
+        pstart = f['hlen'] + 4
+        pend = pstart + f['length']
+        if numpy:
+            b = c = s2b('')
+            if f['length'] >= 4:
+                mask = numpy.frombuffer(buf, dtype=numpy.dtype('<u4'),
+                        offset=f['hlen'], count=1)
+                data = numpy.frombuffer(buf, dtype=numpy.dtype('<u4'),
+                        offset=pstart, count=int(f['length'] / 4))
+                #b = numpy.bitwise_xor(data, mask).data
+                b = numpy.bitwise_xor(data, mask).tostring()
+
+            if f['length'] % 4:
+                #print("Partial unmask")
+                mask = numpy.frombuffer(buf, dtype=numpy.dtype('B'),
+                        offset=f['hlen'], count=(f['length'] % 4))
+                data = numpy.frombuffer(buf, dtype=numpy.dtype('B'),
+                        offset=pend - (f['length'] % 4),
+                        count=(f['length'] % 4))
+                c = numpy.bitwise_xor(data, mask).tostring()
+            return b + c
+        else:
+            # Slower fallback
+            data = array.array('B')
+            mask = s2a(f['mask'])
+            data.fromstring(buf[pstart:pend])
+            for i in range(len(data)):
+                data[i] ^= mask[i % 4]
+            return data.tostring()
+
+    @staticmethod
     def encode_hybi(buf, opcode, base64=False):
         """ Encode a HyBi style WebSocket frame.
         Optional opcode:
@@ -193,15 +271,15 @@ Sec-WebSocket-Accept: %s\r
         b1 = 0x80 | (opcode & 0x0f) # FIN + opcode
         payload_len = len(buf)
         if payload_len <= 125:
-            header = struct.pack('>BB', b1, payload_len)
-        elif payload_len > 125 and payload_len <= 65536:
-            header = struct.pack('>BBH', b1, 126, payload_len)
+            header = pack('>BB', b1, payload_len)
+        elif payload_len > 125 and payload_len < 65536:
+            header = pack('>BBH', b1, 126, payload_len)
         elif payload_len >= 65536:
-            header = struct.pack('>BBQ', b1, 127, payload_len)
+            header = pack('>BBQ', b1, 127, payload_len)
 
         #print("Encoded: %s" % repr(header + buf))
 
-        return header + buf
+        return header + buf, len(header), 0
 
     @staticmethod
     def decode_hybi(buf, base64=False):
@@ -210,6 +288,7 @@ Sec-WebSocket-Accept: %s\r
             {'fin'          : 0_or_1,
              'opcode'       : number,
              'mask'         : 32_bit_number,
+             'hlen'         : header_bytes_number,
              'length'       : payload_bytes_number,
              'payload'      : decoded_buffer,
              'left'         : bytes_left_number,
@@ -217,98 +296,83 @@ Sec-WebSocket-Accept: %s\r
              'close_reason' : string}
         """
 
-        ret = {'fin'          : 0,
-               'opcode'       : 0,
-               'mask'         : 0,
-               'length'       : 0,
-               'payload'      : None,
-               'left'         : 0,
-               'close_code'   : None,
-               'close_reason' : None}
+        f = {'fin'          : 0,
+             'opcode'       : 0,
+             'mask'         : 0,
+             'hlen'         : 2,
+             'length'       : 0,
+             'payload'      : None,
+             'left'         : 0,
+             'close_code'   : None,
+             'close_reason' : None}
 
         blen = len(buf)
-        ret['left'] = blen
-        header_len = 2
+        f['left'] = blen
 
-        if blen < header_len:
-            return ret # Incomplete frame header
+        if blen < f['hlen']:
+            return f # Incomplete frame header
 
-        b1, b2 = struct.unpack_from(">BB", buf)
-        ret['opcode'] = b1 & 0x0f
-        ret['fin'] = (b1 & 0x80) >> 7
+        b1, b2 = unpack_from(">BB", buf)
+        f['opcode'] = b1 & 0x0f
+        f['fin'] = (b1 & 0x80) >> 7
         has_mask = (b2 & 0x80) >> 7
 
-        ret['length'] = b2 & 0x7f
+        f['length'] = b2 & 0x7f
 
-        if ret['length'] == 126:
-            header_len = 4
-            if blen < header_len:
-                return ret # Incomplete frame header
-            (ret['length'],) = struct.unpack_from('>xxH', buf)
-        elif ret['length'] == 127:
-            header_len = 10
-            if blen < header_len:
-                return ret # Incomplete frame header
-            (ret['length'],) = struct.unpack_from('>xxQ', buf)
+        if f['length'] == 126:
+            f['hlen'] = 4
+            if blen < f['hlen']:
+                return f # Incomplete frame header
+            (f['length'],) = unpack_from('>xxH', buf)
+        elif f['length'] == 127:
+            f['hlen'] = 10
+            if blen < f['hlen']:
+                return f # Incomplete frame header
+            (f['length'],) = unpack_from('>xxQ', buf)
 
-        full_len = header_len + has_mask * 4 + ret['length']
+        full_len = f['hlen'] + has_mask * 4 + f['length']
 
         if blen < full_len: # Incomplete frame
-            return ret # Incomplete frame header
+            return f # Incomplete frame header
 
         # Number of bytes that are part of the next frame(s)
-        ret['left'] = blen - full_len
+        f['left'] = blen - full_len
 
         # Process 1 frame
         if has_mask:
             # unmask payload
-            ret['mask'] = buf[header_len:header_len+4]
-            b = c = ''
-            if ret['length'] >= 4:
-                mask = numpy.frombuffer(buf, dtype=numpy.dtype('<L4'),
-                        offset=header_len, count=1)
-                data = numpy.frombuffer(buf, dtype=numpy.dtype('<L4'),
-                        offset=header_len + 4, count=int(ret['length'] / 4))
-                #b = numpy.bitwise_xor(data, mask).data
-                b = numpy.bitwise_xor(data, mask).tostring()
-
-            if ret['length'] % 4:
-                print("Partial unmask")
-                mask = numpy.frombuffer(buf, dtype=numpy.dtype('B'),
-                        offset=header_len, count=(ret['length'] % 4))
-                data = numpy.frombuffer(buf, dtype=numpy.dtype('B'),
-                        offset=full_len - (ret['length'] % 4),
-                        count=(ret['length'] % 4))
-                c = numpy.bitwise_xor(data, mask).tostring()
-            ret['payload'] = b + c
+            f['mask'] = buf[f['hlen']:f['hlen']+4]
+            f['payload'] = WebSocketServer.unmask(buf, f)
         else:
             print("Unmasked frame: %s" % repr(buf))
-            ret['payload'] = buf[(header_len + has_mask * 4):full_len]
+            f['payload'] = buf[(f['hlen'] + has_mask * 4):full_len]
 
-        if base64 and ret['opcode'] in [1, 2]:
+        if base64 and f['opcode'] in [1, 2]:
             try:
-                ret['payload'] = b64decode(ret['payload'])
+                f['payload'] = b64decode(f['payload'])
             except:
                 print("Exception while b64decoding buffer: %s" %
                         repr(buf))
                 raise
 
-        if ret['opcode'] == 0x08:
-            if ret['length'] >= 2:
-                ret['close_code'] = struct.unpack_from(">H", ret['payload'])
-            if ret['length'] > 3:
-                ret['close_reason'] = ret['payload'][2:]
+        if f['opcode'] == 0x08:
+            if f['length'] >= 2:
+                f['close_code'] = unpack_from(">H", f['payload'])
+            if f['length'] > 3:
+                f['close_reason'] = f['payload'][2:]
 
-        return ret
+        return f
 
     @staticmethod
     def encode_hixie(buf):
-        return s2b("\x00" + b2s(b64encode(buf)) + "\xff")
+        return s2b("\x00" + b2s(b64encode(buf)) + "\xff"), 1, 1
 
     @staticmethod
     def decode_hixie(buf):
         end = buf.find(s2b('\xff'))
         return {'payload': b64decode(buf[1:end]),
+                'hlen': 1,
+                'length': end - 1,
                 'left': len(buf) - (end + 1)}
 
 
@@ -323,7 +387,7 @@ Sec-WebSocket-Accept: %s\r
         num1 = int("".join([c for c in key1 if c.isdigit()])) / spaces1
         num2 = int("".join([c for c in key2 if c.isdigit()])) / spaces2
 
-        return b2s(md5(struct.pack('>II8s',
+        return b2s(md5(pack('>II8s',
             int(num1), int(num2), key3)).digest())
 
     #
@@ -357,17 +421,27 @@ Sec-WebSocket-Accept: %s\r
         than 0, then the caller should call again when the socket is
         ready. """
 
+        tdelta = int(time.time()*1000) - self.start_time
+
         if bufs:
             for buf in bufs:
                 if self.version.startswith("hybi"):
                     if self.base64:
-                        self.send_parts.append(self.encode_hybi(buf,
-                            opcode=1, base64=True))
+                        encbuf, lenhead, lentail = self.encode_hybi(
+                                buf, opcode=1, base64=True)
                     else:
-                        self.send_parts.append(self.encode_hybi(buf,
-                            opcode=2, base64=False))
+                        encbuf, lenhead, lentail = self.encode_hybi(
+                                buf, opcode=2, base64=False)
+
                 else:
-                    self.send_parts.append(self.encode_hixie(buf))
+                    encbuf, lenhead, lentail = self.encode_hixie(buf)
+
+                if self.rec:
+                    self.rec.write("%s,\n" %
+                            repr("{%s{" % tdelta
+                                + encbuf[lenhead:-lentail]))
+
+                self.send_parts.append(encbuf)
 
         while self.send_parts:
             # Send pending frames
@@ -392,6 +466,7 @@ Sec-WebSocket-Accept: %s\r
 
         closed = False
         bufs = []
+        tdelta = int(time.time()*1000) - self.start_time
 
         buf = self.client.recv(self.buffer_size)
         if len(buf) == 0:
@@ -423,11 +498,11 @@ Sec-WebSocket-Accept: %s\r
                         break
 
             else:
-                if buf[0:2] == '\xff\x00':
+                if buf[0:2] == s2b('\xff\x00'):
                     closed = "Client sent orderly close frame"
                     break
 
-                elif buf[0:2] == '\x00\xff':
+                elif buf[0:2] == s2b('\x00\xff'):
                     buf = buf[2:]
                     continue # No-op
 
@@ -440,6 +515,13 @@ Sec-WebSocket-Accept: %s\r
                 frame = self.decode_hixie(buf)
 
             self.traffic("}")
+
+            if self.rec:
+                start = frame['hlen']
+                end = frame['hlen'] + frame['length']
+                self.rec.write("%s,\n" %
+                        repr("}%s}" % tdelta + buf[start:end]))
+
 
             bufs.append(frame['payload'])
 
@@ -456,9 +538,9 @@ Sec-WebSocket-Accept: %s\r
         if self.version.startswith("hybi"):
             msg = s2b('')
             if code != None:
-                msg = struct.pack(">H%ds" % (len(reason)), code)
+                msg = pack(">H%ds" % (len(reason)), code)
 
-            buf = self.encode_hybi(msg, opcode=0x08, base64=False)
+            buf, h, t = self.encode_hybi(msg, opcode=0x08, base64=False)
             self.client.send(buf)
 
         elif self.version == "hixie-76":
@@ -511,6 +593,7 @@ Sec-WebSocket-Accept: %s\r
             if not os.path.exists(self.cert):
                 raise self.EClose("SSL connection but '%s' not found"
                                   % self.cert)
+            retsock = None
             try:
                 retsock = ssl.wrap_socket(
                         sock,
@@ -558,11 +641,11 @@ Sec-WebSocket-Accept: %s\r
         if ver:
             # HyBi/IETF version of the protocol
 
-            if sys.hexversion < 0x2060000 or not numpy:
-                raise self.EClose("Python >= 2.6 and numpy module is required for HyBi-07 or greater")
-
-            if ver == '7':
-                self.version = "hybi-07"
+            # HyBi-07 report version 7
+            # HyBi-08 - HyBi-12 report version 8
+            # HyBi-13 reports version 13
+            if ver in ['7', '8', '13']:
+                self.version = "hybi-%02d" % int(ver)
             else:
                 raise self.EClose('Unsupported protocol version %s' % ver)
 
@@ -579,7 +662,7 @@ Sec-WebSocket-Accept: %s\r
             # Generate the hash value for the accept header
             accept = b64encode(sha1(s2b(key + self.GUID)).digest())
 
-            response = self.server_handshake_hybi % accept
+            response = self.server_handshake_hybi % b2s(accept)
             if self.base64:
                 response += "Sec-WebSocket-Protocol: base64\r\n"
             else:
@@ -613,6 +696,9 @@ Sec-WebSocket-Accept: %s\r
         self.msg("%s: %s WebSocket connection" % (address[0], stype))
         self.msg("%s: Version %s, base64: '%s'" % (address[0],
             self.version, self.base64))
+        if self.path != '/':
+            self.msg("%s: Path: '%s'" % (address[0], self.path))
+
 
         # Send server WebSockets handshake response
         #self.msg("sending response [%s]" % response)
@@ -655,11 +741,23 @@ Sec-WebSocket-Accept: %s\r
         self.send_parts = []
         self.recv_part  = None
         self.base64     = False
+        self.rec        = None
+        self.start_time = int(time.time()*1000)
 
         # handler process
         try:
             try:
                 self.client = self.do_handshake(startsock, address)
+
+                if self.record:
+                    # Record raw frame data as JavaScript array
+                    fname = "%s.%s" % (self.record,
+                                        self.handler_id)
+                    self.msg("opening record file: %s" % fname)
+                    self.rec = open(fname, 'w+')
+                    self.rec.write("var VNC_frame_data = [\n")
+
+                self.ws_connection = True
                 self.new_client()
             except self.EClose:
                 _, exc, _ = sys.exc_info()
@@ -672,6 +770,10 @@ Sec-WebSocket-Accept: %s\r
                 if self.verbose:
                     self.msg(traceback.format_exc())
         finally:
+            if self.rec:
+                self.rec.write("'EOF']\n")
+                self.rec.close()
+
             if self.client and self.client != startsock:
                 self.client.close()
 
@@ -686,11 +788,7 @@ Sec-WebSocket-Accept: %s\r
         is a WebSockets client then call new_client() method (which must
         be overridden) for each new client connection.
         """
-
-        lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        lsock.bind((self.listen_host, self.listen_port))
-        lsock.listen(100)
+        lsock = self.socket(self.listen_host, self.listen_port)
 
         if self.daemon:
             self.daemonize(keepfd=lsock.fileno(), chdir=self.web)
@@ -699,7 +797,7 @@ Sec-WebSocket-Accept: %s\r
 
         # Allow override of SIGINT
         signal.signal(signal.SIGINT, self.do_SIGINT)
-        if not Process:
+        if not multiprocessing:
             # os.fork() (python 2.4) child reaper
             signal.signal(signal.SIGCHLD, self.fallback_SIGCHLD)
 
@@ -710,10 +808,16 @@ Sec-WebSocket-Accept: %s\r
                     startsock = None
                     pid = err = 0
 
+                    time_elapsed = time.time() - self.launch_time
+                    if self.timeout and time_elapsed > self.timeout:
+                        self.msg('listener exit due to --timeout %s'
+                                % self.timeout)
+                        break
+
                     try:
                         self.poll()
 
-                        ready = select.select([lsock], [], [], 1)[0];
+                        ready = select.select([lsock], [], [], 1)[0]
                         if lsock in ready:
                             startsock, address = lsock.accept()
                         else:
@@ -732,9 +836,17 @@ Sec-WebSocket-Accept: %s\r
                         else:
                             raise
 
-                    if Process:
+                    if self.run_once:
+                        # Run in same process if run_once
+                        self.top_new_client(startsock, address)
+                        if self.ws_connection :
+                            self.msg('%s: exiting due to --run-once'
+                                    % address[0])
+                            break
+                    elif multiprocessing:
                         self.vmsg('%s: new handler Process' % address[0])
-                        p = Process(target=self.top_new_client,
+                        p = multiprocessing.Process(
+                                target=self.top_new_client,
                                 args=(startsock, address))
                         p.start()
                         # child will not return

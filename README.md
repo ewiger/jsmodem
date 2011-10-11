@@ -10,7 +10,9 @@ project http://www.youtube.com/watch?v=MEsmgHrKQYM.
 * Get a copy by cloning the repo from `git@github.com:ewiger/jsmodem.git`
 
 * Run make all in jsmodem/emulator to download and patch JSLinux from
-  http://bellard.org/jslinux
+  http://bellard.org/jslinux (This step is still valid but left as a fallback.
+  Right now the jslinux version is in sync with the version on the website 
+  of Aug 20, 2011).
 
 * Start serving JSLinux locally with `sudo ./serve.sh`
 
@@ -27,7 +29,7 @@ abstraction with fallback to flash.
 
 To serve on host system one will need
 
-* python 2.6
+* python 2.6+
 
 * bash
 
@@ -47,9 +49,11 @@ To serve on host system one will need
 
 Internet connection was tested on 
 
-* *server*: linux 2.6.35 - ubuntu 10.10 Maverick, 
-  *client:* Chrome 12.0.742.112 (linux), FF 3.6.8 (linux).
-
+* *host server*: linux 2.6.35 - ubuntu 10.10 Maverick, 
+                 linux 2.6.38-11 - 11.04 Natty Narwhal
+  *host client:* Chrome 12.0.742.112 (linux), FF 3.6.8 (linux),
+                 Chrome 14.0.835.202 (linux)
+ 
 
 ### Feedback
 
