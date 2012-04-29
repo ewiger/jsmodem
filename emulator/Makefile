@@ -2,17 +2,17 @@ WGET=/usr/bin/wget
 JSLINUX_URL=http://bellard.org/jslinux/
 # Patch jslinux.js?
 ifeq ($(shell if [ -e jslinux.js ] ; then echo 1 ; else echo 0 ; fi), 0)
-PATCH_JSLINUX=1
+    PATCH_JSLINUX=1
 else 
- ifeq ($(shell if test "jslinux.js" -ot "jsmodem.js" ; then echo 1 ; else echo 0 ; fi), 1)
- PATCH_JSLINUX=1
- endif
+    ifeq ($(shell if test "jslinux.js" -ot "jsmodem.js" ; then echo 1 ; else echo 0 ; fi), 1)
+        PATCH_JSLINUX=1
+    endif
 endif
 
 
 all: jslinux
 
-jslinux: cpux86.js cpux86-ta.js jslinux.js term.js
+jslinux: cpux86.js cpux86-ta.js jslinux.js term.js utils.js
 ifeq (${PATCH_JSLINUX},1)
 	patch -p1 < ./patch_jslinux.js
 endif
@@ -29,6 +29,10 @@ jslinux.js:
 term.js:
 	${WGET} ${JSLINUX_URL}term.js
 
+utils.js:
+	${WGET} ${JSLINUX_URL}utils.js
+
+
 clean:
-	rm -f cpux86.js cpux86-ta.js jslinux.js term.js
+	rm -f cpux86.js cpux86-ta.js jslinux.js term.js utils.js
 

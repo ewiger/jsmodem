@@ -1,14 +1,14 @@
 /* 
    Linux launcher
 
-   Copyright (c) 2011 Fabrice Bellard
+   Copyright (c) 2011-2012 Fabrice Bellard
 
    Redistribution or commercial use is prohibited without the author's
    permission.
 */
 "use strict";
 
-var term, pc, boot_start_time;
+var term, pc, boot_start_time, init_state;
 
 function term_start()
 {
@@ -52,8 +52,10 @@ function get_boot_time()
 
 function start()
 {
-    var start_addr, initrd_size, params, cmdline_addr;
+    var params;
     
+    init_state = new Object();
+
     params = new Object();
 
     /* serial output chars */
@@ -68,28 +70,74 @@ function start()
 
     params.get_boot_time = get_boot_time;
 
+    /* IDE drive. The raw disk image is split into files of
+     * 'block_size' KB. 
+     */
+    //params.hda = { url: "hda%d.bin", block_size: 64, nb_blocks: 912 };
+
     pc = new PCEmulator(params);
 
-    // Add JSModem for networking.
+    init_state.params = params;
+
+    /* Add JSModem for networking:
+     *  - register ttyS2 as COM2 with io port 2f8 and irq 3;
+     *  - connect websocket to server at localhost:2080 (will be 
+     *    redirected on the server-side).
+     */
     var modem = new JSModem(pc);
     modem.connect('localhost', 2080);
-    pc.load_binary("vmlinux-2.6.20.bin", 0x00100000);
+    
+    pc.load_binary("vmlinux-2.6.20.bin", 0x00100000, start2);
+}
 
-    initrd_size = pc.load_binary("root.bin", 0x00400000);
+function start2(ret)
+{
+    if (ret < 0)
+        return;
+    init_state.start_addr = 0x10000;
+    init_state.initrd_size = 0;
+    //pc.load_binary("linuxstart.bin", init_state.start_addr, start3);
+    pc.load_binary("linuxstart.bin", init_state.start_addr, start3_);
+}
 
-    start_addr = 0x10000;
-    pc.load_binary("linuxstart.bin", start_addr);
+function start3(ret)
+{
+    var block_list;
+    if (ret < 0)
+        return;
+    /* Preload blocks so that the boot time does not depend on the
+     * time to load the required disk data (optional) */
+    block_list = [ 0, 7, 3, 643, 720, 256, 336, 644, 781, 387, 464, 475, 131, 589, 468, 472, 474, 776, 777, 778, 779, 465, 466, 473, 467, 469, 470, 512, 592, 471, 691, 697, 708, 792, 775, 769 ];
+    pc.ide0.drives[0].bs.preload(block_list, start4);
+}
+
+function start3_(ret)
+{
+    if (ret < 0)
+        return;
+    pc.load_binary("root.bin", 0x00400000, start4);
+}
+
+function start4(ret)
+{
+    var cmdline_addr;
+
+    if (ret < 0)
+        return;
+
+    /* Assume booting from /dev/ram0 - result of previous load_binary("root.bin") call equals to the 
+     * size of the ram image.
+     */
+    init_state.initrd_size = ret;
 
     /* set the Linux kernel command line */
-    /* Note: we don't use initramfs because it is not possible to
-       disable gzip decompression in this case, which would be too
-       slow. */
     cmdline_addr = 0xf800;
+    //pc.cpu.write_string(cmdline_addr, "console=ttyS0 root=/dev/hda ro init=/sbin/init notsc=1 hdb=none");
     pc.cpu.write_string(cmdline_addr, "console=ttyS0 root=/dev/ram0 rw init=/sbin/init notsc=1");
 
-    pc.cpu.eip = start_addr;
-    pc.cpu.regs[0] = params.mem_size; /* eax */
-    pc.cpu.regs[3] = initrd_size; /* ebx */
+    pc.cpu.eip = init_state.start_addr;
+    pc.cpu.regs[0] = init_state.params.mem_size; /* eax */
+    pc.cpu.regs[3] = init_state.initrd_size; /* ebx = initrd_size (optional ram disk - old jslinux booting) */
     pc.cpu.regs[1] = cmdline_addr; /* ecx */
 
     boot_start_time = (+new Date());
