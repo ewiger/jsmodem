@@ -5,6 +5,13 @@ studying project conducted on PC emulator that was implemented in JS by Fabrice
 Bellard (see http://bellard.org/jslinux). There is a screencast discussing this
 project http://www.youtube.com/watch?v=MEsmgHrKQYM.
 
+### Licensing
+
+* The software behind jslinux emulator is the intellectual property of Fabrice 
+  Bellard (see jslinux.org for further details).
+* The rest of the patch is licensed under MIT license (see copy of it in
+  LICENSE).
+
 ### Installation
 
 * Get a copy by cloning the repo from `git@github.com:ewiger/jsmodem.git`
