@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Javascript PC Emulator</title>
+<title>JSModem - Javascript PC Emulator with a virtual modem</title>
 <style>
 .term {
     font-family: courier,fixed,swiss,monospace,sans-serif;
@@ -26,7 +26,6 @@
 </style>
 <script src="utils.js" type="text/javascript"></script>
 <script src="term.js" type="text/javascript"></script>
-<script src="cpux86.js" type="text/javascript"></script>
 <script src="cpux86-ta.js" type="text/javascript"></script>
 <script src="jsmodem.js" type="text/javascript"></script>
 </head>
@@ -36,5 +35,17 @@
 <script type="text/javascript" src="jslinux.js"></script>
 <td><input type="button" value="Clear clipboard" onclick="clear_clipboard();"><br><textarea row="4" cols="16" id="text_clipboard"></textarea>
 </table>
+<p id="note">
+This is <a href="https://github.com/ewiger/jsmodem">JSModem</a> &mdash; a
+virtual modem device for Fabrice Bellard's
+<a href="https://bellard.org/jslinux/">JSLinux</a> PC emulator. Linux 2.6.20
+boots entirely in your browser; log in as <b>root</b>.
+Networking requires a local websocket proxy: clone the repo, run
+<code>sudo ./serve.sh</code> in <code>emulator/</code>, then run
+<code>./ppp_up</code> inside the guest. The websocket endpoint defaults to
+<code>localhost:2080</code> and can be overridden with
+<code>?modem=host:port</code>. Without the proxy the machine still boots,
+just without network.
+</p>
 </body>
 </html>

@@ -81,11 +81,33 @@ function start()
 
     /* Add JSModem for networking:
      *  - register ttyS2 as COM2 with io port 2f8 and irq 3;
-     *  - connect websocket to server at localhost:2080 (will be 
-     *    redirected on the server-side).
+     *  - connect websocket to the proxy server (will be redirected on
+     *    the server-side).
+     *
+     * The endpoint defaults to localhost:2080 (see serve.sh) and can be
+     * overridden with ?modem=host:port in the page URL. When no proxy is
+     * reachable the VM still boots, just without network.
      */
     var modem = new JSModem(pc);
-    modem.connect('localhost', 2080);
+    try {
+        var modem_host = 'localhost', modem_port = 2080, m, hp;
+        m = /[?&]modem=([^&]+)/.exec(window.location.search);
+        if (m) {
+            hp = decodeURIComponent(m[1]).split(':');
+            if (hp[0])
+                modem_host = hp[0];
+            if (hp[1])
+                modem_port = parseInt(hp[1], 10);
+        }
+        /* browsers block plain ws:// from https pages, except to localhost */
+        var encrypt = (window.location.protocol === 'https:' &&
+                       modem_host !== 'localhost' &&
+                       modem_host !== '127.0.0.1');
+        modem.connect(modem_host, modem_port, encrypt);
+    } catch (e) {
+        console.log("JSModem: websocket connection failed, " +
+                    "continuing without network (" + e + ")");
+    }
     
     pc.load_binary("vmlinux-2.6.20.bin", 0x00100000, start2);
 }

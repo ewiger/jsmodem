@@ -5,6 +5,28 @@ studying project conducted on PC emulator that was implemented in JS by Fabrice
 Bellard (see http://bellard.org/jslinux). There is a screencast discussing this
 project http://www.youtube.com/watch?v=MEsmgHrKQYM.
 
+### Live demo
+
+https://ewiger.github.io/jsmodem/ — boots Linux 2.6.20 entirely in your
+browser (log in as `root`), served statically from GitHub Pages, no build
+step or server stack involved.
+
+The modem itself needs a websocket proxy to have something to dial into.
+The page tries `ws://localhost:2080` by default, so if you run `serve.sh`
+locally (see Installation below) the hosted demo can still get network via
+your own machine. The endpoint can be overridden with `?modem=host:port`
+in the page URL. Without a proxy the machine boots fine, just offline.
+
+### Running locally
+
+The emulator is plain static files — any web server will do (`file://`
+won't work, browsers block the XHR that loads the kernel image):
+
+    cd emulator && python3 -m http.server 8090
+
+Then open http://localhost:8090/. For actual network connectivity run
+`sudo ./serve.sh` instead and follow the Installation steps below.
+
 ### Licensing
 
 * The software behind jslinux emulator is the intellectual property of Fabrice 
